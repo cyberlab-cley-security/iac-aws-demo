@@ -32,10 +32,6 @@ resource "aws_iam_role_policy" "overly_permissive" {
       Resource = "*"
     }]
   })
-
-  tags = {
-    owner = "christopher.ley@gmail.com"
-  }
 }
 
 resource "aws_iam_instance_profile" "vm_profile" {

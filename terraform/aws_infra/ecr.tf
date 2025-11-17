@@ -30,7 +30,4 @@ resource "aws_ecr_lifecycle_policy" "ecr" {
       }
     }]
   })
-    tags = {
-    owner = "christopher.ley@gmail.com"
-  }
 }
