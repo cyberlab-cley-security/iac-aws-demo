@@ -87,10 +87,12 @@
       when: admin_user_check.stdout == 'null'
 
     - name: Ensure MongoDB authentication is enabled
-      ansible.builtin.lineinfile:
+      ansible.builtin.blockinfile:
         path: /etc/mongod.conf
-        regexp: '^ *authorization:'
-        line: "  authorization: enabled"
+        marker: "# {mark} ANSIBLE SECURITY BLOCK"
+        block: |
+          security:
+            authorization: enabled
       notify: Restart MongoDB
 
     # --- Application database + user ---
