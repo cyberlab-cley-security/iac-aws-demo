@@ -2,7 +2,7 @@
 # IAM overly permissive policy
 ###########################
 resource "aws_iam_role" "vm_creator" {
-  name = "vm_creator_overly_permissive"
+  name          = local.iam_vm_role_name
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -21,7 +21,7 @@ resource "aws_iam_role" "vm_creator" {
 }
 
 resource "aws_iam_role_policy" "overly_permissive" {
-  name = "AllowEverythingPolicy"
+  name = local.iam_vm_policy_name
   role = aws_iam_role.vm_creator.id
 
   policy = jsonencode({
@@ -35,7 +35,7 @@ resource "aws_iam_role_policy" "overly_permissive" {
 }
 
 resource "aws_iam_instance_profile" "vm_profile" {
-  name = "vm_overly_perm_profile"
+  name = local.iam_vm_profile_name
   role = aws_iam_role.vm_creator.name
 
   tags = {

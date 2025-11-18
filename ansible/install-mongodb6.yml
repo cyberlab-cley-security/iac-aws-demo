@@ -9,6 +9,7 @@
     mongo_app_pass: "AppPass123!"
     mongo_backup_user: "backup"
     mongo_backup_pass: "BackupPass123!"
+    mongo_app_db: "cloudapps-app-db"
     ansible_user: ubuntu
     ansible_python_interpreter: /opt/ansible-venv/bin/python
   tasks:
@@ -66,9 +67,10 @@
         timeout: 60
         state: started
 
+    # --- Admin user ---
     - name: Check if MongoDB admin user exists
       ansible.builtin.command: >
-        mongo admin --quiet --eval "db.getUser('{{ mongo_admin_user }}')"
+        mongosh admin --quiet --eval "db.getUser('{{ mongo_admin_user }}')"
       register: admin_user_check
       failed_when: false
       changed_when: false
@@ -91,18 +93,20 @@
         line: "  authorization: enabled"
       notify: Restart MongoDB
 
-    - name: Create MongoDB application user
+    # --- Application database + user ---
+    - name: Create MongoDB application user in cloudapps-app-db
       community.mongodb.mongodb_user:
         login_host: "127.0.0.1"
         login_user: "{{ mongo_admin_user }}"
         login_password: "{{ mongo_admin_pass }}"
-        database: admin
+        database: "{{ mongo_app_db }}"
         name: "{{ mongo_app_user }}"
         password: "{{ mongo_app_pass }}"
         roles:
-          - readWriteAnyDatabase
+          - readWrite
         state: present
 
+    # --- Backup user ---
     - name: Create MongoDB backup user
       community.mongodb.mongodb_user:
         login_host: "127.0.0.1"

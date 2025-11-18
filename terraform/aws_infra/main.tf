@@ -45,6 +45,9 @@ locals {
   sshkey_name       = "${var.name_prefix}-sshkey-${random_string.suffix.result}"
   sg_name           = "${var.name_prefix}-sg-${random_string.suffix.result}"
   ecr_name          = "${var.name_prefix}-ecr-${random_string.suffix.result}"
+  iam_vm_role_name  = "${var.name_prefix}-iam-vm-role-${random_string.suffix.result}"
+  iam_vm_policy_name  = "${var.name_prefix}-iam-vm-policy-${random_string.suffix.result}"
+  iam_vm_profile_name  = "${var.name_prefix}-iam-vm-profil-${random_string.suffix.result}"
 }
 
 
