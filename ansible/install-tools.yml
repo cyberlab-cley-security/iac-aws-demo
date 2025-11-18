@@ -86,9 +86,3 @@
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
         mode: '0600'
-
-    - name: Set Kubeconfig for cluster
-      ansible.builtin.command: 
-        cmd: aws eks update-kubeconfig --name "{{ EKS_CLUSTER_NAME }}"
-        environment:
-          PATH: "/opt/ansible-venv/bin:{{ ansible_env.PATH }}"
