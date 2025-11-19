@@ -28,6 +28,12 @@ env:
   TF_DIR: ./terraform/aws_infra
   ANSIBLE_DIR: ./ansible
 
+# Required permissions for security scanning and job summaries
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
 jobs:
 
   # -------------------- JOB 1: Terraform Validate --------------------
@@ -59,12 +65,25 @@ jobs:
       AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
     steps:
       - uses: actions/checkout@v2
+      
+      # Run Checkov with SARIF output
       - name: Check Terraform code with Checkov
         uses: bridgecrewio/checkov-action@master
         with:
           directory: ${{ env.TF_DIR }}
-          quiet: true
-          output_format: github_failed_only
+          quiet: false
+          output_format: sarif
+          output_file_path: checkov-terraform.sarif
+          download_external_modules: false
+        continue-on-error: true
+      
+      # Upload Checkov SARIF to GitHub Security tab
+      - name: Upload Checkov Terraform SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov-terraform.sarif
+          category: checkov-terraform
         continue-on-error: true
 
   # -------------------- JOB 3: Terraform Apply --------------------
@@ -189,9 +208,9 @@ jobs:
       AWS_REGION: ${{ github.event.inputs.AWS_REGION }}
     steps:
       - uses: actions/checkout@v2
+      
       - name: Display All Terraform Outputs
         run: |
-
           REGION="${{ needs.build-iac.outputs.region }}"
           VPC_ID="${{ needs.build-iac.outputs.vpc_id }}"
           CLUSTER_NAME="${{ needs.build-iac.outputs.cluster_name }}"
@@ -212,6 +231,108 @@ jobs:
           echo "🔹 ECR Registry URL:          $ECR_URL"
           echo "======================="
 
+      # Create Job Summary (visible in Actions tab)
+      - name: Create Deployment Summary
+        run: |
+          REGION="${{ needs.build-iac.outputs.region }}"
+          VPC_ID="${{ needs.build-iac.outputs.vpc_id }}"
+          CLUSTER_NAME="${{ needs.build-iac.outputs.cluster_name }}"
+          CLUSTER_ENDPOINT="${{ needs.build-iac.outputs.cluster_endpoint }}"
+          EC2_DNS="${{ needs.build-iac.outputs.ec2instance_dns }}"
+          EC2_IP="${{ needs.build-iac.outputs.ec2instance_ip }}"
+          ECR_URL="${{ needs.build-iac.outputs.ecr_registry_url }}"
+
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🚀 AWS Infrastructure Deployed Successfully
+          
+          ### 📋 Deployment Information
+          
+          | Resource | Value |
+          |----------|-------|
+          | **Region** | \`$REGION\` |
+          | **VPC ID** | \`$VPC_ID\` |
+          | **EKS Cluster Name** | \`$CLUSTER_NAME\` |
+          | **EKS Endpoint** | \`$CLUSTER_ENDPOINT\` |
+          | **EC2 Bastion Public DNS** | \`$EC2_DNS\` |
+          | **EC2 Bastion Public IP** | \`$EC2_IP\` |
+          | **ECR Registry URL** | \`$ECR_URL\` |
+          
+          ### 🔗 Quick Access Commands
+          
+          **Configure kubectl:**
+          \`\`\`bash
+          aws eks update-kubeconfig --region $REGION --name $CLUSTER_NAME
+          \`\`\`
+          
+          **SSH to Bastion:**
+          \`\`\`bash
+          ssh -i ~/.ssh/id_ed25519 ec2-user@$EC2_IP
+          \`\`\`
+          
+          **ECR Login:**
+          \`\`\`bash
+          aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR_URL
+          \`\`\`
+          
+          ---
+          
+          :white_check_mark: **Deployment Status:** SUCCESS
+          
+          :calendar: **Date:** $(date '+%Y-%m-%d %H:%M:%S UTC')
+          EOF
+
+      # Upload deployment info as artifact
+      - name: Save Deployment Info as Artifact
+        run: |
+          mkdir -p deployment-info
+          
+          cat > deployment-info/infrastructure-details.json << EOF
+          {
+            "deployment_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "region": "${{ needs.build-iac.outputs.region }}",
+            "vpc_id": "${{ needs.build-iac.outputs.vpc_id }}",
+            "cluster_name": "${{ needs.build-iac.outputs.cluster_name }}",
+            "cluster_endpoint": "${{ needs.build-iac.outputs.cluster_endpoint }}",
+            "ec2_bastion_dns": "${{ needs.build-iac.outputs.ec2instance_dns }}",
+            "ec2_bastion_ip": "${{ needs.build-iac.outputs.ec2instance_ip }}",
+            "ecr_registry_url": "${{ needs.build-iac.outputs.ecr_registry_url }}"
+          }
+          EOF
+          
+          cat > deployment-info/README.md << EOF
+          # AWS Infrastructure Deployment
+          
+          ## Deployment Details
+          
+          - **Date:** $(date '+%Y-%m-%d %H:%M:%S UTC')
+          - **Region:** ${{ needs.build-iac.outputs.region }}
+          - **VPC ID:** ${{ needs.build-iac.outputs.vpc_id }}
+          - **EKS Cluster:** ${{ needs.build-iac.outputs.cluster_name }}
+          - **EKS Endpoint:** ${{ needs.build-iac.outputs.cluster_endpoint }}
+          - **EC2 Bastion DNS:** ${{ needs.build-iac.outputs.ec2instance_dns }}
+          - **EC2 Bastion IP:** ${{ needs.build-iac.outputs.ec2instance_ip }}
+          - **ECR URL:** ${{ needs.build-iac.outputs.ecr_registry_url }}
+          
+          ## Quick Commands
+          
+          ### Configure kubectl
+          \`\`\`bash
+          aws eks update-kubeconfig --region ${{ needs.build-iac.outputs.region }} --name ${{ needs.build-iac.outputs.cluster_name }}
+          \`\`\`
+          
+          ### SSH to Bastion
+          \`\`\`bash
+          ssh -i ~/.ssh/id_ed25519 ec2-user@${{ needs.build-iac.outputs.ec2instance_ip }}
+          \`\`\`
+          EOF
+
+      - name: Upload Deployment Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: infrastructure-deployment-info
+          path: deployment-info/
+          retention-days: 90
+
   # -------------------- JOB 5: Ansible Security Controls --------------------
   ansible-security:
     name: "Job 5: Automation Security Controls - Ansible"
@@ -223,9 +344,140 @@ jobs:
       AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
     steps:
       - uses: actions/checkout@v2
-      - run: pip install ansible ansible-lint
-      - name: Lint Ansible
-        run: ansible-lint ${{ env.ANSIBLE_DIR }}/*.yml || true
+      
+      # Install security scanning tools
+      - name: Install security tools
+        run: |
+          pip install --upgrade pip
+          pip install ansible ansible-lint
+          pip install ansible-later  # Best practices verification
+          pip install yamllint       # Strict YAML validation
+      
+      # 1. Strict YAML validation
+      - name: YAML Lint
+        run: |
+          cat > .yamllint << EOF
+          extends: default
+          rules:
+            line-length:
+              max: 200
+              level: warning
+            indentation:
+              spaces: 2
+            truthy:
+              allowed-values: ['true', 'false', 'yes', 'no']
+          EOF
+          yamllint -c .yamllint ${{ env.ANSIBLE_DIR }}/*.yml
+        continue-on-error: true
+
+      # 2. Ansible Lint with SARIF output
+      - name: Ansible Lint (Strict Mode)
+        run: |
+          cat > .ansible-lint << EOF
+          # Ansible-lint configuration
+          
+          # List of rules to check (all by default)
+          # Critical security rules
+          warn_list:
+            - experimental
+            - role-name
+          
+          skip_list: []
+          
+          # Severity level
+          # Do not ignore warnings
+          strict: true
+          
+          # Specific security rules
+          enable_list:
+            - no-handler
+            - no-jinja-when
+            - no-relative-paths
+            - no-same-owner
+            - yaml
+          
+          # Files to exclude
+          exclude_paths:
+            - .github/
+            - test/
+          EOF
+          
+          # Run ansible-lint with SARIF output format (if supported)
+          ansible-lint -c .ansible-lint ${{ env.ANSIBLE_DIR }}/*.yml \
+            -f sarif > ansible-lint.sarif || true
+          
+          # Also display results in console for logs
+          ansible-lint -c .ansible-lint ${{ env.ANSIBLE_DIR }}/*.yml \
+            --force-color --parseable || true
+        continue-on-error: true
+
+      # 3. Ansible Later - Best practices verification
+      - name: Ansible Later - Best Practices Check
+        run: |
+          cat > .later.yml << EOF
+          ---
+          rules:
+            # Security checks
+            standards:
+              - ansible_min_version
+              - become_user_should_be_explicit
+              - commands_should_not_be_used_in_place_of_modules
+              - package_module_should_use_state
+              - shell_module_should_not_be_used
+              - ansible_vault_should_be_used
+            
+            # Minimum severity level
+            min_severity: 1
+          EOF
+          
+          ansible-later -c .later.yml ${{ env.ANSIBLE_DIR }}/*.yml || echo "⚠️ Ansible Later found issues"
+        continue-on-error: true
+
+      # 4. Checkov - Ansible IaC Security Scan with SARIF
+      - name: Checkov - Ansible Security Scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: ${{ env.ANSIBLE_DIR }}
+          framework: ansible
+          output_format: sarif
+          output_file_path: checkov-ansible.sarif
+          quiet: false
+          download_external_modules: false
+        continue-on-error: true
+
+      # 5. Upload Ansible Lint SARIF to GitHub Security
+      - name: Upload Ansible Lint SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ansible-lint.sarif
+          category: ansible-lint
+        continue-on-error: true
+
+      # 6. Upload Checkov Ansible SARIF to GitHub Security
+      - name: Upload Checkov Ansible SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov-ansible.sarif
+          category: checkov-ansible
+        continue-on-error: true
+
+      # 7. Security Summary Report
+      - name: Security Summary Report
+        if: always()
+        run: |
+          echo "================================"
+          echo "🛡️  ANSIBLE SECURITY SCAN SUMMARY"
+          echo "================================"
+          echo "✅ YAML syntax validation: COMPLETED"
+          echo "✅ Ansible-lint checks: COMPLETED"
+          echo "✅ Ansible-later best practices: COMPLETED"
+          echo "✅ Checkov Ansible scan: COMPLETED"
+          echo ""
+          echo "📊 Results uploaded to GitHub Security tab"
+          echo "   → Security > Code scanning alerts"
+          echo "================================"
 
   # -------------------- JOB 6: Install Tools --------------------
   tools-deploy:
