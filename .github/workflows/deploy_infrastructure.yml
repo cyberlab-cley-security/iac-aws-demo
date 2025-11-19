@@ -146,7 +146,8 @@ jobs:
           cd ${{ env.TF_DIR }}
 
           # Use the terraform binary and get outputs
-          TERRAFORM_BIN=$(which terraform)
+          export PATH="$HOME/.terraform/bin:$PATH"
+          output_json=$(terraform output -json 2>/dev/null | sed '/^::/d')
           output_json=$($TERRAFORM_BIN output -json 2>/dev/null)
           cluster_name=$(echo "$output_json" | jq -r '.cluster_name.value')
           cluster_endpoint=$(echo "$output_json" | jq -r '.cluster_endpoint.value')
