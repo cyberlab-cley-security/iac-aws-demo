@@ -146,14 +146,19 @@ jobs:
           cd ${{ env.TF_DIR }}
 
           # Use the terraform binary and get outputs
+          # Ensure Terraform binary is in PATH
           export PATH="$HOME/.terraform/bin:$PATH"
-          output_json=$(terraform output -json 2>/dev/null | sed '/^::/d')
-          cluster_name=$(echo "$output_json" | jq -r '.cluster_name.value')
-          cluster_endpoint=$(echo "$output_json" | jq -r '.cluster_endpoint.value')
-          ec2instance_dns=$(echo "$output_json" | jq -r '.ec2instance_dns.value')
-          ec2instance_ip=$(echo "$output_json" | jq -r '.ec2instance_ip.value')
-          ecr_registry_url=$(echo "$output_json" | jq -r '.ecr_registry_url.value')
-          vpc_id=$(echo "$output_json" | jq -r '.vpc_id.value')
+
+          # Save Terraform outputs in a temporary JSON file to avoid contamination from GitHub Actions logs
+          terraform output -json > tf_output.json
+
+          # Extract individual outputs using jq
+          cluster_name=$(jq -r '.cluster_name.value' tf_output.json)
+          cluster_endpoint=$(jq -r '.cluster_endpoint.value' tf_output.json)
+          ec2instance_dns=$(jq -r '.ec2instance_dns.value' tf_output.json)
+          ec2instance_ip=$(jq -r '.ec2instance_ip.value' tf_output.json)
+          ecr_registry_url=$(jq -r '.ecr_registry_url.value' tf_output.json)
+          vpc_id=$(jq -r '.vpc_id.value' tf_output.json)
           region="${AWS_DEFAULT_REGION}"
 
           # debug
