@@ -145,14 +145,8 @@ jobs:
         run: |
           cd ${{ env.TF_DIR }}
 
-          # Use the standard Terraform binary
-          terraform output -json 2> /dev/null > tf_output.json
-          
-          # Capture Terraform output JSON cleanly
-          if [ ! -s tf_output.json ]; then
-            echo "ERROR: Terraform output JSON is empty!"
-            exit 1
-          fi
+          # Use the Terraform binary from the setup action
+          ${{ env.TERRAFORM_CLI_PATH }}/terraform-bin output -json > tf_output.json 2>&1
 
           # Debug: check JSON
           echo "Terraform output JSON:"
