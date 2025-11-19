@@ -146,13 +146,17 @@ jobs:
           cd ${{ env.TF_DIR }}
 
           # Capture outputs
-          cluster_name=$(terraform output -raw cluster_name 2>/dev/null | tr -d '\r' | head -n1)
-          cluster_endpoint=$(terraform output -raw cluster_endpoint 2>/dev/null | tr -d '\r' | head -n1)
-          ec2instance_dns=$(terraform output -raw ec2instance_dns 2>/dev/null | tr -d '\r' | head -n1)
-          ec2instance_ip=$(terraform output -raw ec2instance_ip 2>/dev/null | tr -d '\r' | head -n1)
-          ecr_registry_url=$(terraform output -raw ecr_registry_url 2>/dev/null | tr -d '\r' | head -n1)
-          vpc_id=$(terraform output -raw vpc_id 2>/dev/null | tr -d '\r' | head -n1)
-          region=${{ github.event.inputs.AWS_REGION }}
+          cluster_name=$(terraform output -raw cluster_name | tr -d '\r' || echo "")
+          cluster_endpoint=$(terraform output -raw cluster_endpoint | tr -d '\r' || echo "")
+          ec2instance_dns=$(terraform output -raw ec2instance_dns | tr -d '\r' || echo "")
+          ec2instance_ip=$(terraform output -raw ec2instance_ip | tr -d '\r' || echo "")
+          ecr_registry_url=$(terraform output -raw ecr_registry_url | tr -d '\r' || echo "")
+          vpc_id=$(terraform output -raw vpc_id | tr -d '\r' || echo "")
+          region="${AWS_DEFAULT_REGION}"
+
+          # debug
+          echo "cluster_name=${cluster_name}"
+          echo "EKS endpoint=${cluster_endpoint}"
 
           # Export for GitHub Actions
           echo "cluster_name=$cluster_name" >> $GITHUB_OUTPUT
@@ -162,6 +166,7 @@ jobs:
           echo "ecr_registry_url=$ecr_registry_url" >> $GITHUB_OUTPUT
           echo "vpc_id=$vpc_id" >> $GITHUB_OUTPUT
           echo "region=$region" >> $GITHUB_OUTPUT
+
 
   # -------------------- JOB 4: Display Outputs --------------------
   display-infra:
