@@ -174,16 +174,25 @@ jobs:
       - uses: actions/checkout@v2
       - name: Display All Terraform Outputs
         run: |
+
+          REGION="${{ needs.build-iac.outputs.region }}"
+          VPC_ID="${{ needs.build-iac.outputs.vpc_id }}"
+          CLUSTER_NAME="${{ needs.build-iac.outputs.cluster_name }}"
+          CLUSTER_ENDPOINT="${{ needs.build-iac.outputs.cluster_endpoint }}"
+          EC2_DNS="${{ needs.build-iac.outputs.ec2instance_dns }}"
+          EC2_IP="${{ needs.build-iac.outputs.ec2instance_ip }}"
+          ECR_URL="${{ needs.build-iac.outputs.ecr_registry_url }}"
+
           echo "======================="
           echo "🚀 AWS Infra Deployed"
           echo "======================="
-          echo "🔹 Region:                    ${{ needs.build-iac.outputs.region }}"
-          echo "🔹 VPC ID:                    ${{ needs.build-iac.outputs.vpc_id }}"
-          echo "🔹 EKS Cluster Name:          ${{ needs.build-iac.outputs.cluster_name }}"
-          echo "🔹 EKS Endpoint:              ${{ needs.build-iac.outputs.cluster_endpoint }}"
-          echo "🔹 EC2 Bastion Public DNS:    ${{ needs.build-iac.outputs.ec2instance_dns }}"
-          echo "🔹 EC2 Bastion Public IP:     ${{ needs.build-iac.outputs.ec2instance_ip }}"
-          echo "🔹 ECR Registry URL:          ${{ needs.build-iac.outputs.ecr_registry_url }}"
+          echo "🔹 Region:                    $REGION"
+          echo "🔹 VPC ID:                    $VPC_ID"
+          echo "🔹 EKS Cluster Name:          $CLUSTER_NAME"
+          echo "🔹 EKS Endpoint:              $CLUSTER_ENDPOINT"
+          echo "🔹 EC2 Bastion Public DNS:    $EC2_DNS"
+          echo "🔹 EC2 Bastion Public IP:     $EC2_IP"
+          echo "🔹 ECR Registry URL:          $ECR_URL"
           echo "======================="
 
   # -------------------- JOB 5: Ansible Security Controls --------------------
@@ -211,12 +220,15 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
       ACTOR_PREFIX: ${{ needs.build-iac.outputs.ACTOR_PREFIX }}
+      EKS_CLUSTER_NAME: "${{ needs.build-iac.outputs.cluster_name }}"
     steps:
       - uses: actions/checkout@v2
-      - name: Set ACTOR_PREFIX
+      - name: Set env
         run: |
           echo "ACTOR_PREFIX='$ACTOR_PREFIX'"
           echo "Bucket S3: ${{ github.event.inputs.NAME_PREFIX }}-$ACTOR_PREFIX-s3-tfstate"
+          echo "EKS_CLUSTER_NAME='$EKS_CLUSTER_NAME'"
+          echo "EKS Cluster Name: $EKS_CLUSTER_NAME"
       - name: Download inventory
         run: aws s3 cp s3://${{ github.event.inputs.NAME_PREFIX }}-$ACTOR_PREFIX-s3-tfstate/ansible_inventory.ini .
         working-directory: ${{ env.ANSIBLE_DIR }}
@@ -232,6 +244,7 @@ jobs:
             --extra-vars AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
             --extra-vars AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
             --extra-vars AWS_DEFAULT_REGION=${{ github.event.inputs.AWS_REGION }}
+            --extra-vars EKS_CLUSTER_NAME=${{ needs.build-iac.outputs.cluster_name }}
 
   # -------------------- JOB 7: Install MongoDB --------------------
   install-mongo:
