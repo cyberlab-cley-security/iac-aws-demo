@@ -145,8 +145,9 @@ jobs:
         run: |
           cd ${{ env.TF_DIR }}
 
-          # Get outputs
-          output_json=$(terraform output -json)
+          # Use the terraform binary and get outputs
+          TERRAFORM_BIN=$(which terraform)
+          output_json=$($TERRAFORM_BIN output -json 2>/dev/null)
           cluster_name=$(echo "$output_json" | jq -r '.cluster_name.value')
           cluster_endpoint=$(echo "$output_json" | jq -r '.cluster_endpoint.value')
           ec2instance_dns=$(echo "$output_json" | jq -r '.ec2instance_dns.value')
@@ -156,8 +157,8 @@ jobs:
           region="${AWS_DEFAULT_REGION}"
 
           # debug
-          echo "cluster_name=${cluster_name}"
-          echo "EKS endpoint=${cluster_endpoint}"
+          echo "cluster_name=$cluster_name"
+          echo "EKS endpoint=$cluster_endpoint"
           echo "ec2instance_dns=$ec2instance_dns"
           echo "ec2instance_ip=$ec2instance_ip"
           echo "ecr_registry_url=$ecr_registry_url"
