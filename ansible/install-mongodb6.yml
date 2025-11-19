@@ -12,7 +12,8 @@
     mongo_app_db: "cloudapps-app-db"
     ansible_user: ubuntu
     ansible_python_interpreter: /opt/ansible-venv/bin/python
-  tasks:
+
+  pre_tasks:
     - name: Ensure virtualenv exists
       ansible.builtin.command:
         cmd: python3 -m venv /opt/ansible-venv
@@ -28,6 +29,12 @@
         virtualenv: /opt/ansible-venv
         state: present
 
+    - name: Install mongodb collection
+      ansible.builtin.command: >
+        /opt/ansible-venv/bin/ansible-galaxy collection install community.mongodb
+      changed_when: false
+
+  tasks:
     - name: Import MongoDB public GPG key
       ansible.builtin.apt_key:
         url: https://www.mongodb.org/static/pgp/server-6.0.asc
@@ -95,8 +102,8 @@
             authorization: enabled
       notify: Restart MongoDB
 
-    # --- Application database + user ---
-    - name: Create MongoDB application user in cloudapps-app-db
+    # --- Application user ---
+    - name: Create MongoDB application user in {{ mongo_app_db }}
       community.mongodb.mongodb_user:
         login_host: "127.0.0.1"
         login_user: "{{ mongo_admin_user }}"
