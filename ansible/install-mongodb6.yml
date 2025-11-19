@@ -3,16 +3,17 @@
   become: true
   vars:
     mongo_version: "6.0"
-    mongo_admin_user: "admin"
-    mongo_admin_pass: "AdminPass123!"
-    mongo_app_user: "appuser"
-    mongo_app_pass: "AppPass123!"
-    mongo_backup_user: "backup"
-    mongo_backup_pass: "BackupPass123!"
-    mongo_app_db: "cloudapps-app-db"
+    mongo_admin_user: "{{ MONGO_ADMIN_USER }}"
+    mongo_admin_pass: "{{ MONGO_ADMIN_PASS }}"
+    mongo_app_user: "{{ MONGO_APP_USER }}"
+    mongo_app_pass: "{{ MONGO_APP_PASS }}"
+    mongo_backup_user: "{{ MONGO_BACKUP_USER }}"
+    mongo_backup_pass: "{{ MONGO_BACKUP_PASS }}"
+    mongo_app_db: "{{ MONGO_APP_DB }}"
     ansible_user: ubuntu
     ansible_python_interpreter: /opt/ansible-venv/bin/python
-  tasks:
+
+  pre_tasks:
     - name: Ensure virtualenv exists
       ansible.builtin.command:
         cmd: python3 -m venv /opt/ansible-venv
@@ -28,6 +29,7 @@
         virtualenv: /opt/ansible-venv
         state: present
 
+  tasks:
     - name: Import MongoDB public GPG key
       ansible.builtin.apt_key:
         url: https://www.mongodb.org/static/pgp/server-6.0.asc
@@ -95,8 +97,8 @@
             authorization: enabled
       notify: Restart MongoDB
 
-    # --- Application database + user ---
-    - name: Create MongoDB application user in cloudapps-app-db
+    # --- Create MongoBG Application user ---
+    - name: Create MongoDB application user in {{ mongo_app_db }}
       community.mongodb.mongodb_user:
         login_host: "127.0.0.1"
         login_user: "{{ mongo_admin_user }}"
@@ -108,7 +110,7 @@
           - readWrite
         state: present
 
-    # --- Backup user ---
+    # --- Create MongoBG Backup user ---
     - name: Create MongoDB backup user
       community.mongodb.mongodb_user:
         login_host: "127.0.0.1"

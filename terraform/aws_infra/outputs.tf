@@ -29,3 +29,8 @@ output "ec2instance_dns" {
 output "ecr_registry_url" {
   value = aws_ecr_repository.ecr.repository_url
 }
+
+output "vpc_id" {
+  description = "ID of the VPC"
+  value       = module.vpc.vpc_id
+}

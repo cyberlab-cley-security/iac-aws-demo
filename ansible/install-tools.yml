@@ -23,30 +23,42 @@
         update_cache: yes
         cache_valid_time: 3600
 
-    - name: Install python3-pip and python3-venv
+    - name: Install base tools (pip, venv, jq, unzip, curl)
       ansible.builtin.apt:
         name:
           - python3-pip
           - python3-venv
+          - jq
+          - unzip
+          - curl
         state: present
 
-    - name: Install jq
-      ansible.builtin.snap:
-        name: jq
-        state: present
+    # ---------------- AWS CLI ----------------
+    - name: Install AWS CLI v2 (zip installer)
+      ansible.builtin.command: |
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
+      args:
+        creates: /tmp/awscliv2.zip
 
-    - name: Install aws-cli
-      ansible.builtin.snap:
-        name: aws-cli
-        state: present
-        classic: yes
+    - name: Unzip AWS CLI installer
+      ansible.builtin.unarchive:
+        src: /tmp/awscliv2.zip
+        dest: /tmp
+        remote_src: yes
 
+    - name: Install AWS CLI v2
+      ansible.builtin.command: /tmp/aws/install
+      args:
+        creates: /usr/local/bin/aws
+
+    # ---------------- Kubectl ----------------
     - name: Download kubectl v1.31.1
       ansible.builtin.get_url:
         url: "https://dl.k8s.io/release/v1.31.1/bin/linux/amd64/kubectl"
         dest: /usr/local/bin/kubectl
         mode: '0755'
 
+    # ---------------- Python Virtualenv ----------------
     - name: Create Python virtualenv for Ansible tools
       ansible.builtin.command:
         cmd: python3 -m venv /opt/ansible-venv
@@ -64,7 +76,8 @@
           - kubernetes
         virtualenv: /opt/ansible-venv
 
-    - name: Create AWS directory if it does not exist
+    # ---------------- AWS & Kubeconfig ----------------
+    - name: Create AWS directory
       ansible.builtin.file:
         path: /home/{{ ansible_user }}/.aws
         state: directory
@@ -115,6 +128,7 @@
         group: "{{ ansible_user }}"
         mode: "0600"
 
+    # ---------------- ArgoCD ----------------
     - name: Create ArgoCD namespace
       ansible.builtin.command:
         cmd: kubectl create namespace argocd
@@ -130,7 +144,7 @@
         -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
       become_user: "{{ ansible_user }}"
 
-    - name: Wait for ArgoCD server deployment to be available
+    - name: Wait for ArgoCD server
       ansible.builtin.command: >
         kubectl wait --namespace argocd
         --for=condition=available
@@ -138,7 +152,7 @@
         deployment/argocd-server
       become_user: "{{ ansible_user }}"
 
-    - name: Patch ArgoCD server service to LoadBalancer
+    - name: Patch ArgoCD service to LoadBalancer
       ansible.builtin.command: >
         kubectl patch svc argocd-server -n argocd
         -p '{"spec": {"type": "LoadBalancer"}}'

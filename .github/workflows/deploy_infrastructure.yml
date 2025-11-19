@@ -1,189 +1,336 @@
 name: Deploy Infrastructure
 
 on:
-  # push:
-  #  branches:
-  #    - main
   workflow_dispatch:
     inputs:
       AWS_REGION:
-        description: 'AWS region in which to deploy the infrastructure'
+        description: AWS region
         required: true
-        default: 'us-east-1'
+        default: us-east-1
       NAME_PREFIX:
-        description: 'Prefix name for resources to be created: s3 bucket, vpc, eks, ec2, etc.'
+        description: Prefix name
         required: true
-        default: 'eks'
+        default: eks
       WORKER_NODES_NUMBER:
-        description: 'Number of worker nodes in eks_cluster'
+        description: Number of worker nodes
         required: true
-        type: choice
-        options:
-          - 1
-          - 2
-          - 3
-          - 4
-          - 5
-        default: '1'
+        default: "1"
       WORKER_NODES_TYPE:
-        description: 'Worker nodes type in eks_cluster - https://docs.aws.amazon.com/ec2/latest/instancetypes/gp.html'
+        description: Worker nodes type
         required: true
-        type: choice
-        options:
-          - t3.nano
-          - t3.micro
-          - t3.small
-          - t3.medium
-          - t3.large
-        default: 't3.medium'
+        default: t3.medium
       PUBLIC_SSH_KEY:
-        description: 'Public ssh key to connect to ec2-bastion host'
+        description: Public ssh key for EC2 bastion
         required: true
         default: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGvpeb4rpaWjWK9QDdn/Nv65PM+XAT+0XIgbVEnzo45f cley@MacBook-Air-de-Christopher.local'
 
-jobs:
-  deploy:
-    name: Deploy AWS infrastructure to host EKS (VPC, EKS, Node Group, S3, etc.)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@ee0669bd1cc54295c223e0bb666b733df41de1c5 # pin@v2
+env:
+  TF_DIR: ./terraform/aws_infra
+  ANSIBLE_DIR: ./ansible
 
-      - name: Setup tool - install Terraform
-        uses: hashicorp/setup-terraform@633666f66e0061ca3b725c73b2ec20cd13a8fdd1 # pin@v2
+jobs:
+
+  # -------------------- JOB 1: Terraform Validate --------------------
+  validate-iac:
+    name: "Job 1: Validate Infra - Terraform"
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.2
-          terraform_wrapper: false
+      - run: terraform init -backend=false
+        working-directory: ${{ env.TF_DIR }}
+      - run: terraform validate
+        working-directory: ${{ env.TF_DIR }}
 
-      - name: Setup tool - install AWS cli
-        uses: unfor19/install-aws-cli-action@457b7980b125044247e455d87b9a26fc2299b787 # pin@v1
-
-      - name: Prerequisite - Github actor name control to convert to the expected format (underscore and uppercase removed and size limited to 10 chars)
-        id: github_name_control
-        run: |
-          ./github_actor_name_control.sh ${{ github.actor }} >> ACTOR
-          cat ACTOR
-          echo "ACTOR_PREFIX=$(cat ACTOR)" >> $GITHUB_ENV
-          echo ${{ env.ACTOR_PREFIX }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        working-directory: ./scripts
-        shell: bash
-
-      - name: Prerequisite - Check if exists or Create S3 Bucket for tfstate
-        id: s3
-        run: ./check_s3_bucket.sh ${{ github.event.inputs.NAME_PREFIX }} ${{ env.ACTOR_PREFIX }} ${{ github.event.inputs.AWS_REGION }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
-        working-directory: ./scripts
-        shell: bash
-
-      - name: Init - Terraform Init
-        id: init
-        run: terraform init -backend-config="bucket=${{ github.event.inputs.NAME_PREFIX }}-${{ env.ACTOR_PREFIX }}-s3-tfstate" -backend-config="key=${{ github.event.inputs.NAME_PREFIX }}-infra.tfstate" -backend-config="region=${{ github.event.inputs.AWS_REGION }}"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
-        working-directory: ./terraform/aws_infra
-        shell: bash
-
-      - name: Validate - Terraform Validate
-        id: validate
-        run: terraform validate
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
-        working-directory: ./terraform/aws_infra
-        shell: bash
-
-      - name: Deploy infra - Terraform Apply
-        id: apply
-        run: |
-          terraform apply -var="region=${{ github.event.inputs.AWS_REGION }}" -var="name_prefix=${{ github.event.inputs.NAME_PREFIX }}-${{ env.ACTOR_PREFIX }}" -var="worker_nodes_desired_size=${{ github.event.inputs.WORKER_NODES_NUMBER }}" -var="worker_nodes_type=${{ github.event.inputs.WORKER_NODES_TYPE }}" -var="public_ssh_key=${{ github.event.inputs.PUBLIC_SSH_KEY }}" -auto-approve
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
-        working-directory: ./terraform/aws_infra
-        shell: bash
-
-      - name: set env from tf_output
-        id: tf_output
-        run: |
-          echo "EKS_CLUSTER_NAME=$(terraform output cluster_name)" >> $GITHUB_ENV
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
-        working-directory: ./terraform/aws_infra
-        shell: bash
-
-      - name: Download ansible inventory and cluster name created during build phase
-        id: download_inventory
-        run: |
-          aws s3 cp s3://${{ github.event.inputs.NAME_PREFIX }}-${{ env.ACTOR_PREFIX }}-s3-tfstate/ansible_inventory.ini .
-          aws s3 cp s3://${{ github.event.inputs.NAME_PREFIX }}-${{ env.ACTOR_PREFIX }}-s3-tfstate/cluster_name.txt .
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
-        working-directory: ./ansible
-        shell: bash
-
-      - name: Install Tools on ec2-bastion - Run Ansible playbook
-        uses: dawidd6/action-ansible-playbook@5d970176ea4bfd99a3f5004d48e293fe0994eda1 # pin@v2
+  # -------------------- JOB 2: Checkov --------------------
+  security-iac:
+    name: "Job 2: Security Controls Infra - Checkov"
+    runs-on: ubuntu-latest
+    needs: validate-iac
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
+    steps:
+      - uses: actions/checkout@v2
+      - name: Check Terraform code with Checkov
+        uses: bridgecrewio/checkov-action@master
         with:
-          # Required, playbook filepath
+          directory: ${{ env.TF_DIR }}
+          quiet: true
+          output_format: github_failed_only
+        continue-on-error: true
+
+  # -------------------- JOB 3: Terraform Apply --------------------
+  build-iac:
+    name: "Job 3: Build Infra - Terraform Apply"
+    runs-on: ubuntu-latest
+    needs: security-iac
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
+    outputs:
+      cluster_name: ${{ steps.output_cluster.outputs.cluster_name }}
+      cluster_endpoint: ${{ steps.output_cluster.outputs.cluster_endpoint }}
+      ec2instance_dns: ${{ steps.output_cluster.outputs.ec2instance_dns }}
+      ec2instance_ip: ${{ steps.output_cluster.outputs.ec2instance_ip }}
+      ecr_registry_url: ${{ steps.output_cluster.outputs.ecr_registry_url }}
+      vpc_id: ${{ steps.output_cluster.outputs.vpc_id }}
+      region: ${{ steps.output_cluster.outputs.region }}
+      ACTOR_PREFIX: ${{ steps.github_name_control.outputs.actor_prefix }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.2
+
+      # ------------- Actor control ----------------
+      - name: Github actor name control
+        id: github_name_control
+        
+        run: |
+          ACTOR_PREFIX=$(./scripts/github_actor_name_control.sh ${{ github.actor }})
+          echo "actor_prefix=$ACTOR_PREFIX" >> $GITHUB_OUTPUT
+          echo "ACTOR_PREFIX=$ACTOR_PREFIX" >> $GITHUB_ENV
+
+      # ------------- Check or create S3 bucket ---------------
+      - name: Check or create S3 Bucket for tfstate
+        id: s3
+        run: ./scripts/check_s3_bucket.sh ${{ github.event.inputs.NAME_PREFIX }} ${{ env.ACTOR_PREFIX }} ${{ github.event.inputs.AWS_REGION }} ./terraform/bucket_s3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
+
+      # ------------- Terraform Init ----------------
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ github.event.inputs.NAME_PREFIX }}-${{ env.ACTOR_PREFIX }}-s3-tfstate" \
+            -backend-config="key=infra.tfstate" \
+            -backend-config="region=${{ github.event.inputs.AWS_REGION }}"
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
+
+      # ------------- Terraform Apply ----------------
+      - name: Terraform Apply
+        run: |
+          terraform apply \
+            -var="region=${{ github.event.inputs.AWS_REGION }}" \
+            -var="name_prefix=${{ github.event.inputs.NAME_PREFIX }}-${{ env.ACTOR_PREFIX }}" \
+            -var="worker_nodes_desired_size=${{ github.event.inputs.WORKER_NODES_NUMBER }}" \
+            -var="worker_nodes_type=${{ github.event.inputs.WORKER_NODES_TYPE }}" \
+            -var="public_ssh_key=${{ github.event.inputs.PUBLIC_SSH_KEY }}" \
+            -auto-approve
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
+
+      # ------------- Extract Terraform Outputs ----------------
+      - name: Extract Terraform Outputs
+        id: output_cluster
+        run: |
+          cd ${{ env.TF_DIR }}
+
+          # Use the Terraform binary from the setup action
+          ${{ env.TERRAFORM_CLI_PATH }}/terraform-bin output -json > tf_output.json 2>&1
+
+          # Debug: check JSON
+          echo "Terraform output JSON:"
+          cat tf_output.json
+
+          # Extract individual outputs using jq
+          cluster_name=$(jq -r '.cluster_name.value' tf_output.json)
+          cluster_endpoint=$(jq -r '.cluster_endpoint.value' tf_output.json)
+          ec2instance_dns=$(jq -r '.ec2instance_dns.value' tf_output.json)
+          ec2instance_ip=$(jq -r '.ec2instance_ip.value' tf_output.json)
+          ecr_registry_url=$(jq -r '.ecr_registry_url.value' tf_output.json)
+          vpc_id=$(jq -r '.vpc_id.value' tf_output.json)
+          region=$(jq -r '.region.value' tf_output.json || echo "${AWS_DEFAULT_REGION}")
+
+          # debug
+          echo "cluster_name=$cluster_name"
+          echo "EKS endpoint=$cluster_endpoint"
+          echo "ec2instance_dns=$ec2instance_dns"
+          echo "ec2instance_ip=$ec2instance_ip"
+          echo "ecr_registry_url=$ecr_registry_url"
+          echo "vpc_id=$vpc_id"
+          echo "region=$region"
+
+          # Export for GitHub Actions
+          echo "cluster_name=$cluster_name" >> $GITHUB_OUTPUT
+          echo "cluster_endpoint=$cluster_endpoint" >> $GITHUB_OUTPUT
+          echo "ec2instance_dns=$ec2instance_dns" >> $GITHUB_OUTPUT
+          echo "ec2instance_ip=$ec2instance_ip" >> $GITHUB_OUTPUT
+          echo "ecr_registry_url=$ecr_registry_url" >> $GITHUB_OUTPUT
+          echo "vpc_id=$vpc_id" >> $GITHUB_OUTPUT
+          echo "region=$region" >> $GITHUB_OUTPUT
+
+
+  # -------------------- JOB 4: Display Outputs --------------------
+  display-infra:
+    name: "Job 4: Deployed Infra - Display Output"
+    runs-on: ubuntu-latest
+    needs: build-iac
+    env:
+      AWS_REGION: ${{ github.event.inputs.AWS_REGION }}
+    steps:
+      - uses: actions/checkout@v2
+      - name: Display All Terraform Outputs
+        run: |
+
+          REGION="${{ needs.build-iac.outputs.region }}"
+          VPC_ID="${{ needs.build-iac.outputs.vpc_id }}"
+          CLUSTER_NAME="${{ needs.build-iac.outputs.cluster_name }}"
+          CLUSTER_ENDPOINT="${{ needs.build-iac.outputs.cluster_endpoint }}"
+          EC2_DNS="${{ needs.build-iac.outputs.ec2instance_dns }}"
+          EC2_IP="${{ needs.build-iac.outputs.ec2instance_ip }}"
+          ECR_URL="${{ needs.build-iac.outputs.ecr_registry_url }}"
+
+          echo "======================="
+          echo "🚀 AWS Infra Deployed"
+          echo "======================="
+          echo "🔹 Region:                    $REGION"
+          echo "🔹 VPC ID:                    $VPC_ID"
+          echo "🔹 EKS Cluster Name:          $CLUSTER_NAME"
+          echo "🔹 EKS Endpoint:              $CLUSTER_ENDPOINT"
+          echo "🔹 EC2 Bastion Public DNS:    $EC2_DNS"
+          echo "🔹 EC2 Bastion Public IP:     $EC2_IP"
+          echo "🔹 ECR Registry URL:          $ECR_URL"
+          echo "======================="
+
+  # -------------------- JOB 5: Ansible Security Controls --------------------
+  ansible-security:
+    name: "Job 5: Automation Security Controls - Ansible"
+    runs-on: ubuntu-latest
+    needs: build-iac
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
+    steps:
+      - uses: actions/checkout@v2
+      - run: pip install ansible ansible-lint
+      - name: Lint Ansible
+        run: ansible-lint ${{ env.ANSIBLE_DIR }}/*.yml || true
+
+  # -------------------- JOB 6: Install Tools --------------------
+  tools-deploy:
+    name: "Job 6: Automation Deploy Tools - Ansible"
+    runs-on: ubuntu-latest
+    needs: [ansible-security, build-iac]
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
+      ACTOR_PREFIX: ${{ needs.build-iac.outputs.ACTOR_PREFIX }}
+      EKS_CLUSTER_NAME: "${{ needs.build-iac.outputs.cluster_name }}"
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set env
+        run: |
+          echo "ACTOR_PREFIX='$ACTOR_PREFIX'"
+          echo "Bucket S3: ${{ github.event.inputs.NAME_PREFIX }}-$ACTOR_PREFIX-s3-tfstate"
+          echo "EKS_CLUSTER_NAME='$EKS_CLUSTER_NAME'"
+          echo "EKS Cluster Name: $EKS_CLUSTER_NAME"
+      - name: Download inventory
+        run: aws s3 cp s3://${{ github.event.inputs.NAME_PREFIX }}-$ACTOR_PREFIX-s3-tfstate/ansible_inventory.ini .
+        working-directory: ${{ env.ANSIBLE_DIR }}
+      - name: Install Tools
+        uses: dawidd6/action-ansible-playbook@v2
+        with:
           playbook: install-tools.yml
-          # Directory where playbooks live
-          directory: ./ansible
-          # SSH private key to connect to host
-          key: ${{secrets.SSH_PRIVATE_KEY}}
-          # Optional, additional flags to pass to ansible-playbook
+          directory: ${{ env.ANSIBLE_DIR }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           options: |
             --inventory ansible_inventory.ini
             --extra-vars target="ec2-bastion-public"
             --extra-vars AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
             --extra-vars AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
             --extra-vars AWS_DEFAULT_REGION=${{ github.event.inputs.AWS_REGION }}
-            --extra-vars EKS_CLUSTER_NAME=${{ env.EKS_CLUSTER_NAME }}
+            --extra-vars EKS_CLUSTER_NAME=${{ needs.build-iac.outputs.cluster_name }}
 
-      - name: Install MongoDB on ec2-bastion - Run Ansible playbook
-        uses: dawidd6/action-ansible-playbook@5d970176ea4bfd99a3f5004d48e293fe0994eda1 # pin@v2
+  # -------------------- JOB 7: Install MongoDB --------------------
+  install-mongo:
+    name: "Job 7: Automation Install MongoDB - Ansible"
+    runs-on: ubuntu-latest
+    needs: [tools-deploy, build-iac]
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
+      ACTOR_PREFIX: ${{ needs.build-iac.outputs.ACTOR_PREFIX }}
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set ACTOR_PREFIX
+        run: |
+          echo "ACTOR_PREFIX='$ACTOR_PREFIX'"
+          echo "Bucket S3: ${{ github.event.inputs.NAME_PREFIX }}-$ACTOR_PREFIX-s3-tfstate"
+      - name: Download inventory
+        run: aws s3 cp s3://${{ github.event.inputs.NAME_PREFIX }}-$ACTOR_PREFIX-s3-tfstate/ansible_inventory.ini .
+        working-directory: ${{ env.ANSIBLE_DIR }}
+      - uses: dawidd6/action-ansible-playbook@v2
         with:
-          # Required, playbook filepath
           playbook: install-mongodb6.yml
-          # Directory where playbooks live
-          directory: ./ansible
-          # SSH private key to connect to host
-          key: ${{secrets.SSH_PRIVATE_KEY}}
-          # Optional, additional flags to pass to ansible-playbook
-          options: |
-            --inventory ansible_inventory.ini
-            --extra-vars target="ec2-bastion-public"
-
-      - name: Create Cron Backup MongoDB - Run Ansible playbook
-        uses: dawidd6/action-ansible-playbook@5d970176ea4bfd99a3f5004d48e293fe0994eda1
-        with:
-          # Required, playbook filepath
-          playbook: mongodb-backup.yml
-          # Directory where playbooks live
-          directory: ./ansible
-          # SSH private key to connect to host
+          directory: ${{ env.ANSIBLE_DIR }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          # Optional, additional flags to pass to ansible-playbook
           options: |
             --inventory ansible_inventory.ini
             --extra-vars target="ec2-bastion-public"
-            --extra-vars mongo_backup_user="backup"
-            --extra-vars s3_bucket="${{ github.event.inputs.NAME_PREFIX }}-${{ env.ACTOR_PREFIX }}-s3-tfstate"
+            --extra-vars AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+            --extra-vars AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            --extra-vars AWS_DEFAULT_REGION=${{ github.event.inputs.AWS_REGION }}
+            --extra-vars MONGO_ADMIN_USER="${{ secrets.MONGO_ADMIN_USER }}"
+            --extra-vars MONGO_ADMIN_PASS="${{ secrets.MONGO_ADMIN_PASS }}"
+            --extra-vars MONGO_APP_USER="${{ secrets.MONGO_APP_USER }}"
+            --extra-vars MONGO_APP_PASS="${{ secrets.MONGO_APP_PASS }}"
+            --extra-vars MONGO_BACKUP_USER="${{ secrets.MONGO_BACKUP_USER }}"
+            --extra-vars MONGO_BACKUP_PASS="${{ secrets.MONGO_BACKUP_PASS }}"
+            --extra-vars MONGO_APP_DB="${{ secrets.MONGO_APP_DB }}"
+
+  # -------------------- JOB 8: MongoDB Backup --------------------
+  backup-mongo:
+    name: "Job 8: Automation - Configure Backup - Ansible"
+    runs-on: ubuntu-latest
+    needs: [install-mongo, build-iac]
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
+      ACTOR_PREFIX: ${{ needs.build-iac.outputs.ACTOR_PREFIX }}
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set ACTOR_PREFIX
+        run: |
+          echo "ACTOR_PREFIX='$ACTOR_PREFIX'"
+          echo "Bucket S3: ${{ github.event.inputs.NAME_PREFIX }}-$ACTOR_PREFIX-s3-tfstate"
+      - name: Download inventory
+        run: aws s3 cp s3://${{ github.event.inputs.NAME_PREFIX }}-$ACTOR_PREFIX-s3-tfstate/ansible_inventory.ini .
+        working-directory: ${{ env.ANSIBLE_DIR }}
+      - uses: dawidd6/action-ansible-playbook@v2
+        with:
+          playbook: mongodb-backup.yml
+          directory: ${{ env.ANSIBLE_DIR }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          options: |
+            --inventory ansible_inventory.ini
+            --extra-vars target="ec2-bastion-public"
+            --extra-vars MONGO_BACKUP_USER="${{ secrets.MONGO_BACKUP_USER }}"
+            --extra-vars MONGO_BACKUP_PASS="${{ secrets.MONGO_BACKUP_PASS }}"
+            --extra-vars s3_bucket="${{ github.event.inputs.NAME_PREFIX }}-$ACTOR_PREFIX-s3-tfstate"
+            --extra-vars AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+            --extra-vars AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            --extra-vars AWS_DEFAULT_REGION=${{ github.event.inputs.AWS_REGION }}
