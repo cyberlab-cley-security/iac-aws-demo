@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudlabs-webapp         # Name of the ArgoCD application
+  namespace: argocd              # Namespace where ArgoCD is installed
+spec:
+  project: default               # ArgoCD project (default is "default")
+
+  # Git repository to monitor
+  source:
+    repoURL: 'https://github.com/cyberlab-cley-security/deploy-webapp-demo.git'  # URL of private repo (SSH) or HTTPS
+    targetRevision: main       # Branch to track
+    path: '.'                  # Relative path to kustomization.yaml
+    directory:
+      recurse: false           
+
+  # Destination cluster and namespace for deployment
+  destination:
+    server: 'https://kubernetes.default.svc'  # Current cluster (where ArgoCD is installed)
+    namespace: cloudlabs-webapp               # Target namespace to deploy the application
+
+  # Automatic sync policy
+  syncPolicy:
+    automated:
+      prune: true               # Remove resources that are no longer in Git
+      selfHeal: true            # Automatically revert manual changes on resources
+    syncOptions:
+      - CreateNamespace=true    # Automatically create namespace if it does not exist
+      - ApplyOutOfSyncOnly=true # Apply only when resources are out-of-sync
+
+  # Ignore differences for specific resources (optional)
+  ignoreDifferences:
+    - group: ""                 # Kubernetes API group (empty for core)
+      kind: Secret              # Resource type to ignore
+      name: webapp-secret       # Name of the Secret
+      jsonPointers:
+        - /stringData/MONGO_PASS # Field to ignore to prevent ArgoCD from overwriting at each sync
