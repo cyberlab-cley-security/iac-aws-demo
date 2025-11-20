@@ -1,0 +1,218 @@
+- name: Install and configure ArgoCD
+  hosts: "{{ target | default('nothing') }}"
+  become: true
+  vars:
+    ansible_user: ubuntu
+    github_username: "{{ GITHUB_USERNAME }}"
+    github_token: "{{ GITHUB_TOKEN }}"
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
+    AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
+    AWS_DEFAULT_REGION: "{{ AWS_DEFAULT_REGION }}"
+    EKS_CLUSTER_NAME: "{{ EKS_CLUSTER_NAME }}"
+    PATH: "/opt/ansible-venv/bin:{{ ansible_env.PATH }}"
+
+  tasks:
+
+    # ---------------- ArgoCD ----------------
+    - name: Create ArgoCD namespace
+      ansible.builtin.command:
+        cmd: kubectl create namespace argocd
+      args:
+        chdir: /home/{{ ansible_user }}
+      become_user: "{{ ansible_user }}"
+      register: argocd_ns
+      failed_when: argocd_ns.rc != 0 and "AlreadyExists" not in argocd_ns.stderr
+
+    - name: Install ArgoCD (official install.yaml)
+      ansible.builtin.command: >
+        kubectl apply -n argocd
+        -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+      become_user: "{{ ansible_user }}"
+
+    - name: Wait for ArgoCD server
+      ansible.builtin.command: >
+        kubectl wait --namespace argocd
+        --for=condition=available
+        --timeout=300s
+        deployment/argocd-server
+      become_user: "{{ ansible_user }}"
+
+    - name: Patch ArgoCD service to LoadBalancer
+      ansible.builtin.command: >
+        kubectl patch svc argocd-server -n argocd
+        -p '{"spec": {"type": "LoadBalancer"}}'
+      become_user: "{{ ansible_user }}"
+
+    - name: Wait for ArgoCD LoadBalancer external hostname
+      ansible.builtin.command: >
+        sh -c 'kubectl get svc argocd-server -n argocd -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"'
+      register: argocd_lb
+      retries: 20
+      delay: 10
+      until: argocd_lb.stdout != ""
+      become_user: "{{ ansible_user }}"
+
+    - name: Wait for ArgoCD LoadBalancer to be reachable
+      ansible.builtin.wait_for:
+        host: "{{ argocd_lb.stdout }}"
+        port: 443
+        timeout: 300
+        state: started
+      become_user: "{{ ansible_user }}"
+
+    - name: Display ArgoCD URL
+      ansible.builtin.debug:
+        msg: |
+          ::notice::<<EOF
+          ## 🎉 Argo CD installation successful
+
+          **URL:**  
+          ➜ https://{{ argocd_lb.stdout }}
+
+          **Retrieve the initial admin password:**
+
+          ```bash
+          kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+          ```
+
+          ---
+          Argo CD is now ready to use 🚀
+          EOF
+
+    # ---------------- Install ArgoCD CLI ----------------
+    - name: Install ArgoCD CLI
+      block:
+        - name: Get latest ArgoCD version
+          ansible.builtin.uri:
+            url: https://api.github.com/repos/argoproj/argo-cd/releases/latest
+            return_content: yes
+          register: argocd_latest_release
+
+        - name: Set ArgoCD version
+          ansible.builtin.set_fact:
+            argocd_version: "{{ argocd_latest_release.json.tag_name }}"
+
+        - name: Download ArgoCD CLI
+          ansible.builtin.get_url:
+            url: "https://github.com/argoproj/argo-cd/releases/download/{{ argocd_version }}/argocd-linux-amd64"
+            dest: /tmp/argocd
+            mode: '0755'
+
+        - name: Install ArgoCD CLI
+          ansible.builtin.copy:
+            src: /tmp/argocd
+            dest: /usr/local/bin/argocd
+            mode: '0755'
+            remote_src: yes
+
+        - name: Clean up temporary ArgoCD file
+          ansible.builtin.file:
+            path: /tmp/argocd
+            state: absent
+
+        - name: Verify ArgoCD CLI installation
+          ansible.builtin.command: argocd version --client
+          register: argocd_version_output
+          changed_when: false
+
+        - name: Display ArgoCD CLI version
+          ansible.builtin.debug:
+            msg: "ArgoCD CLI installed: {{ argocd_version_output.stdout }}"
+
+    # ---------------- Retrieve ArgoCD admin password ----------------
+    - name: Retrieve ArgoCD initial admin password
+      ansible.builtin.command: >
+        sh -c 'kubectl -n argocd get secret argocd-initial-admin-secret
+        -o jsonpath="{.data.password}" | base64 -d'
+      register: argocd_admin_password
+      become_user: "{{ ansible_user }}"
+
+    - name: Login to ArgoCD using admin password
+      ansible.builtin.command: >
+        argocd login {{ argocd_lb.stdout }}
+        --username admin
+        --password {{ argocd_admin_password.stdout }}
+        --insecure
+      register: argocd_login
+      become_user: "{{ ansible_user }}"
+      environment:
+        ARGOCD_OPTS: "--grpc-web"
+      retries: 3
+      delay: 5
+      until: argocd_login.rc == 0
+
+    - name: Display ArgoCD login confirmation
+      ansible.builtin.debug:
+        msg: |
+          ::notice::<<EOF
+          ## 🔐 ArgoCD Login Successful
+
+          Logged in as: **admin**  
+          Server: **{{ argocd_lb.stdout }}**
+
+          You can now run ArgoCD commands such as:
+
+          ```bash
+          argocd app list
+          argocd repo list
+          ```
+
+          ---
+          Context updated successfully 🚀
+          EOF
+      
+    - name: Export ArgoCD URL to GitHub Actions output
+      ansible.builtin.lineinfile:
+        path: "{{ lookup('env', 'GITHUB_OUTPUT') }}"
+        line: "ARGOCD_URL=https://{{ argocd_lb.stdout }}"
+        create: yes
+      delegate_to: localhost
+      become: no
+      when: lookup('env', 'GITHUB_OUTPUT') | length > 0
+
+    # ---------------- Add GitHub repo to ArgoCD ----------------
+    - name: Check if ArgoCD repo already exists
+      ansible.builtin.command: argocd repo list --output json
+      register: repo_list
+      become_user: "{{ ansible_user }}"
+      environment:
+        ARGOCD_OPTS: "--grpc-web"
+
+    - name: Add GitHub repository to ArgoCD
+      ansible.builtin.command: >
+        argocd repo add https://github.com/cyberlab-cley-security/deploy-webapp-demo.git 
+        --name deploy-webapp-demo
+        --username "{{ github_username }}"
+        --password "{{ github_token }}"
+      no_log: true
+      when: "'deploy-webapp-demo' not in repo_list.stdout"
+      register: add_repo
+      become_user: "{{ ansible_user }}"
+      environment:
+        ARGOCD_OPTS: "--grpc-web"
+
+    # ---------------- Deploy ArgoCD Application ----------------
+    - name: Copy ArgoCD Application manifest to remote
+      ansible.builtin.copy:
+        src: templates/cloudlabs-webapp.yaml
+        dest: /tmp/cloudlabs-webapp.yaml
+        mode: '0644'
+
+    - name: Deploy ArgoCD Application (cloudlabs-webapp)
+      ansible.builtin.command: >
+        kubectl apply -n argocd -f /tmp/cloudlabs-webapp.yaml
+      become_user: "{{ ansible_user }}"
+      register: deploy_app
+      retries: 3
+      delay: 5
+      until: deploy_app.rc == 0
+
+    - name: Clean up temporary manifest file
+      ansible.builtin.file:
+        path: /tmp/cloudlabs-webapp.yaml
+        state: absent
+
+    - name: Display ArgoCD Application deployment result
+      ansible.builtin.debug:
+        var: deploy_app.stdout
