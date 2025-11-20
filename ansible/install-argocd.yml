@@ -163,11 +163,13 @@
           EOF
       
     - name: Export ArgoCD URL to GitHub Actions output
-      ansible.builtin.shell: |
-        echo "ARGOCD_URL=https://{{ argocd_lb.stdout }}" >> $GITHUB_OUTPUT
-      args:
-        executable: /bin/bash
-      when: lookup('env','GITHUB_OUTPUT') != ""
+      ansible.builtin.lineinfile:
+        path: "{{ lookup('env', 'GITHUB_OUTPUT') }}"
+        line: "ARGOCD_URL=https://{{ argocd_lb.stdout }}"
+        create: yes
+      delegate_to: localhost
+      become: no
+      when: lookup('env', 'GITHUB_OUTPUT') | length > 0
 
     # ---------------- Add GitHub repo to ArgoCD ----------------
     - name: Check if ArgoCD repo already exists
