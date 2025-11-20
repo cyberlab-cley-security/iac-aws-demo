@@ -193,14 +193,25 @@
         ARGOCD_OPTS: "--grpc-web"
 
     # ---------------- Deploy ArgoCD Application ----------------
+    - name: Copy ArgoCD Application manifest to remote
+      ansible.builtin.copy:
+        src: templates/cloudlabs-webapp.yaml
+        dest: /tmp/cloudlabs-webapp.yaml
+        mode: '0644'
+
     - name: Deploy ArgoCD Application (cloudlabs-webapp)
       ansible.builtin.command: >
-        kubectl apply -n argocd -f {{ playbook_dir }}/templates/cloudlabs-webapp.yaml
+        kubectl apply -n argocd -f /tmp/cloudlabs-webapp.yaml
       become_user: "{{ ansible_user }}"
       register: deploy_app
       retries: 3
       delay: 5
       until: deploy_app.rc == 0
+
+    - name: Clean up temporary manifest file
+      ansible.builtin.file:
+        path: /tmp/cloudlabs-webapp.yaml
+        state: absent
 
     - name: Display ArgoCD Application deployment result
       ansible.builtin.debug:
