@@ -301,6 +301,48 @@ jobs:
             --extra-vars github_username="chrisley75"
             --extra-vars github_token=${{ secrets.PERSONAL_GITHUB_TOKEN }}
 
+  # -------------------- JOB 7b: Trigger Build Webapp --------------------
+  trigger-webapp-build:
+    name: "Job 7b: Trigger Webapp Build in Remote Repository"
+    runs-on: ubuntu-latest
+    needs: [install-argocd, build-iac]
+    env:
+      AWS_DEFAULT_REGION: ${{ github.event.inputs.AWS_REGION }}
+      ECR_URL: ${{ needs.build-iac.outputs.ecr_registry_url }}
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Generate Build Tag
+        id: generate_tag
+        run: |
+          # Génération d'un tag unique
+          BUILD_TAG="build-$(date +%Y%m%d-%H%M%S)-${GITHUB_SHA:0:7}"
+          echo "build_tag=$BUILD_TAG" >> $GITHUB_OUTPUT
+          echo "Generated build tag: $BUILD_TAG"
+
+      - name: Trigger Webapp Build in Remote Repository
+        run: |
+          echo "🚀 Triggering build in remote repository..."
+          echo "🌿 Branch: automation_build"
+          echo "📦 ECR URL: $ECR_URL"
+          echo "🏷️  Build Tag: ${{ steps.generate_tag.outputs.build_tag }}"
+          echo "🎯 Full Image: $ECR_URL:${{ steps.generate_tag.outputs.build_tag }}"
+
+          curl -X POST \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Authorization: token ${{ secrets.PERSONAL_GITHUB_TOKEN }}" \
+            https://api.github.com/repos/cyberlab-cley-security/2-code-webapp-demo/dispatches \
+            -d '{
+              "event_type": "trigger-webapp-build",
+              "client_payload": {
+                "ecr_url": "'"$ECR_URL"'",
+                "image_tag": "'"${{ steps.generate_tag.outputs.build_tag }}"'",
+                "aws_region": "'"${{ github.event.inputs.AWS_REGION }}"'",
+                "target_repository": "cyberlab-cley-security/3-deploy-webapp-demo"
+              }
+            }'
+
+
   # -------------------- JOB 6a: Install MongoDB --------------------
   install-mongo:
     name: "Job 6a: Automation Install MongoDB - Ansible"
