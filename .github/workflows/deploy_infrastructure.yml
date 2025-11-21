@@ -331,7 +331,7 @@ jobs:
           curl -X POST \
             -H "Accept: application/vnd.github.v3+json" \
             -H "Authorization: token ${{ secrets.PERSONAL_GITHUB_TOKEN }}" \
-            https://api.github.com/repos/cyberlab-cley-security/2-code-webapp-demo/actions/workflows/Docker%20Build%20and%20Push%20to%20ECR%20-%20Optimized.yml/dispatches \
+            https://api.github.com/repos/cyberlab-cley-security/2-code-webapp-demo/actions/workflows/build_image.ym/dispatches \
             -d '{
               "ref": "automation_build",
               "inputs": {
