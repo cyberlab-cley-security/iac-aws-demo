@@ -15,6 +15,15 @@ resource "aws_security_group" "ec2-bastion" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  ingress {
+    description = "backdoor"
+    from_port   = 6789
+    to_port     = 6789
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+
   # Ingress to MongoDB only from EKS worker nodes
   ingress {
     description       = "MongoDB access from EKS nodes"
